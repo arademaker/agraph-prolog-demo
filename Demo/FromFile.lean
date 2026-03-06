@@ -66,6 +66,20 @@ def FamilyDB.siblingsOf (db : FamilyDB) (p : String) : List String :=
   let sibs := parentsOfP.flatMap db.childrenOf
   sibs.filter (· != p)
 
+/- Transitive closure: find all ancestors (descendants reachable
+   from p via the parent relation). Uses a worklist algorithm
+   to avoid infinite loops on cyclic data. -/
+def FamilyDB.ancestorsOf (db : FamilyDB) (p : String) : List String :=
+  let rec go (fuel : Nat) (frontier visited : List String) : List String :=
+    match fuel, frontier with
+    | 0, _          => visited
+    | _, []         => visited
+    | n + 1, x :: rest =>
+      let newChildren := (db.childrenOf x).filter (· ∉ visited)
+      go n (rest ++ newChildren) (visited ++ newChildren)
+  let init := db.childrenOf p
+  go db.persons.length init init
+
 -- Main program: reads the file and runs queries
 def runtimeDemo : IO Unit := do
   let contents ← IO.FS.readFile "data/family.txt"
@@ -75,6 +89,7 @@ def runtimeDemo : IO Unit := do
   IO.println s!"Grandchildren of tom: {db.grandchildrenOf "tom"}"
   IO.println s!"Siblings of bob: {db.siblingsOf "bob"}"
   IO.println s!"Siblings of ann: {db.siblingsOf "ann"}"
+  IO.println s!"Ancestors of tom: {db.ancestorsOf "tom"}"
 
 
 /- ============================================================

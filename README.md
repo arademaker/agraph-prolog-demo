@@ -12,42 +12,53 @@ parent(bob, pat).
 
 grandparent(X, Z) :- parent(X, Y), parent(Y, Z).
 sibling(X, Y) :- parent(Z, X), parent(Z, Y), X \= Y.
+ancestor(X, Y) :- parent(X, Y).
+ancestor(X, Y) :- parent(X, Z), ancestor(Z, Y).
 
 ?- grandparent(tom, ann).   % true
 ?- sibling(bob, liz).       % true
+?- ancestor(tom, pat).      % true (tom -> bob -> pat)
 ```
 
 ## Approaches Explored
 
 ### [`Demo/Basic.lean`](Demo/Basic.lean) — Hardcoded Facts
 
-**Approach 1: Propositions as types.** Each Prolog fact becomes a constructor of an inductive `Prop`. Queries are *proofs* verified at compile-time. The type checker is the search engine.
+**Approach 1: Propositions as types.** Each Prolog fact becomes a constructor of an inductive `Prop`. Queries are *proofs* verified at compile-time. Includes `Parent`, `Grandparent`, `Sibling`, and `Ancestor` (recursive — transitive closure of `Parent`).
 
 ```lean
-inductive Parent : Person -> Person -> Prop where
-  | tom_bob : Parent tom bob
-  ...
-example : Grandparent tom ann :=
-  Grandparent.intro bob Parent.tom_bob Parent.bob_ann
+inductive Ancestor : Person → Person → Prop where
+  | base : Parent x y → Ancestor x y
+  | step : Parent x mid → Ancestor mid y → Ancestor x y
+
+-- The proof *is* the derivation tree: tom → bob → ann
+example : Ancestor tom ann :=
+  Ancestor.step Parent.tom_bob (Ancestor.base Parent.bob_ann)
 ```
 
-**Approach 2: Decidable functions.** Relations become `Bool`-returning functions. Queries compute results at runtime via `List.filter` / `List.flatMap` — the closest to Prolog's runtime behavior.
+**Bridging Prop and Bool: `Decidable`.** Prolog conflates truth and computation. Lean separates them — but `Decidable` reconnects them. With a `Decidable` instance, the `decide` tactic becomes automated proof search, Lean's closest analog to Prolog's resolution engine.
 
 ```lean
-def isParent : Person -> Person -> Bool
-  | tom, bob => true  ...
-#eval grandchildren tom  -- [ann, pat]
+instance : Decidable (Parent x y) := ...
+example : Parent tom bob := by decide       -- automated!
+example : ¬ Parent liz ann := by decide     -- automated!
+```
+
+**Approach 2: Decidable functions.** Relations become `Bool`-returning functions. Queries compute results at runtime via `List.filter` / `List.flatMap` — the closest to Prolog's runtime behavior. Includes `ancestors` (transitive closure via worklist algorithm).
+
+```lean
+#eval ancestors tom  -- [bob, liz, ann, pat]
 ```
 
 **Approach 3: Type classes as Prolog.** Lean's type class resolution *is* essentially a Prolog engine ([Aarsen et al., 2020](https://arxiv.org/abs/2001.04301v1)): `class ~ predicate`, `instance ~ clause`, `resolution ~ SLD with backtracking`. The elaborator resolves queries automatically.
 
 ```lean
 class IsParent (x : Person) (y : outParam Person)
-instance : IsParent tom bob where
+instance : IsParent tom bob := {}
 #check (inferInstance : IsGrandparent tom ann)  -- ok!
 ```
 
-**Limitation:** `outParam` makes relations functional (one result per input). Multi-valued relations like `sibling` require explicit facts or a different encoding.
+**Limitations:** `outParam` makes relations functional (one result per input). Multi-valued relations like `sibling` require explicit facts. Recursive predicates like `ancestor` cannot be encoded — the resolver would loop. This illustrates a key point: type classes are a *fragment* of Prolog.
 
 ### [`Demo/FromFile.lean`](Demo/FromFile.lean) — Facts from a File
 
@@ -71,18 +82,30 @@ instance : IsParent tom bob where
   - Functions: `grandchildren` via `List.flatMap`
   - Type classes: `instance [IsParent x y] [IsParent y z] : IsGrandparent x z`
 
+**Recursive rules:**
+- Prolog `ancestor(X, Y) :- parent(X, Y). ancestor(X, Y) :- parent(X, Z), ancestor(Z, Y).` →
+  - Props: `Ancestor` inductive with `base` and `step` constructors
+  - Functions: `ancestors` via worklist/BFS (termination must be guaranteed)
+  - Type classes: **not possible** — recursive instances cause the resolver to loop
+
 **Queries:**
 - Prolog `?- grandparent(tom, ann).` →
   - Props: `example : Grandparent tom ann := ...` (a proof term)
   - Functions: `#eval grandchildren tom` (computes `[ann, pat]`)
   - Type classes: `inferInstance : IsGrandparent tom ann` (resolved by elaborator)
+  - Decidable: `example : Grandparent tom ann := by decide` (automated search)
 
 **Loading external facts:**
 - Prolog `consult('file.pl').` →
   - `IO.FS.readFile` (runtime), `#load_family` (compile-time lists), `#consult_prop` (compile-time inductive Prop), or `#consult` (compile-time type classes)
 
-**Negation and backtracking:**
-- Prolog negation `\+` → `¬` with proof (Props), `!= / filter` (functions), not natively supported (type classes)
+**Negation:**
+- Prolog `\+` is *negation as failure* (closed-world assumption): if no clause proves it, it's false
+- Lean `¬` is *constructive*: you must prove impossibility by exhausting all cases (`cases h`)
+- Lean `Bool` functions naturally implement closed-world via `| _, _ => false`
+- `Decidable` bridges both: `example : ¬ Parent liz ann := by decide`
+
+**Backtracking:**
 - Prolog backtracking → proof search (Props), `List` operations (functions), limited by `outParam` (type classes)
 
 ## Building and Running

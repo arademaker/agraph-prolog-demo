@@ -36,6 +36,16 @@ inductive Sibling : Person → Person → Prop where
   | intro (par : Person) :
     Parent par x → Parent par y → x ≠ y → Sibling x y
 
+/- In Prolog: ancestor(X, Y) :- parent(X, Y).
+              ancestor(X, Y) :- parent(X, Z), ancestor(Z, Y).
+   This is *recursive* — the key feature of Prolog for graph traversal.
+   In Lean, we model it as an inductive type with two constructors:
+   a base case and a step case. -/
+
+inductive Ancestor : Person → Person → Prop where
+  | base : Parent x y → Ancestor x y
+  | step : Parent x mid → Ancestor mid y → Ancestor x y
+
 /- ---- Proofs as explanations of derivations ----
    Now we *prove* the queries. The compiler verifies! -/
 -- ?- grandparent(tom, ann).
@@ -46,11 +56,42 @@ example : Grandparent tom ann :=
 example : Sibling bob liz :=
   Sibling.intro tom Parent.tom_bob Parent.tom_liz (by decide)
 
--- We can also prove that something does *not* hold:
--- ?- grandparent(liz, ann). -> false
-example : ¬ Grandparent liz ann := by
-  intro ⟨mid, h1, _⟩
-  cases h1  -- no Parent constructor starts with liz
+-- ?- ancestor(tom, ann).
+-- The proof *is* the derivation tree: tom → bob → ann
+example : Ancestor tom ann :=
+  Ancestor.step Parent.tom_bob (Ancestor.base Parent.bob_ann)
+
+-- ?- ancestor(tom, pat). — a different path through the tree
+example : Ancestor tom pat :=
+  Ancestor.step Parent.tom_bob (Ancestor.base Parent.bob_pat)
+
+-- Direct parent is also an ancestor (base case):
+example : Ancestor tom bob :=
+  Ancestor.base Parent.tom_bob
+
+/- Negation: Prolog's `not` is "negation as failure" — under the
+   closed-world assumption, if no clause proves it, it's false.
+   Lean's `¬` is constructive: you must *prove* impossibility by
+   exhausting all cases. The proof below shows there is no path
+   from liz to ann — no Parent constructor starts with liz. -/
+-- Helper: liz has no children in our family.
+theorem not_parent_liz : ∀ x, ¬ Parent liz x := by
+  intro x h; cases h
+
+example : ¬ Ancestor liz ann := by
+  intro h; cases h with
+  | base h => exact not_parent_liz _ h
+  | step h _ => exact not_parent_liz _ h
+
+-- Helper: ann has no children in our family.
+theorem not_parent_ann : ∀ x, ¬ Parent ann x := by
+  intro x h; cases h
+
+-- No path from ann back to tom (the graph is acyclic):
+example : ¬ Ancestor ann tom := by
+  intro h; cases h with
+  | base h => exact not_parent_ann _ h
+  | step h _ => exact not_parent_ann _ h
 
 /- In Prolog, a derivation is a trace of the rules used.
    In Lean, a proof *is* that trace — and the compiler checks it. -/
@@ -105,6 +146,77 @@ def siblings (p : Person) : List Person :=
 
 #eval siblings bob
 #eval siblings ann
+
+/- Transitive closure: ancestor(X, Y).
+   In Prolog, recursion "just works" — the engine backtracks.
+   In Lean, we must convince the termination checker that
+   the recursion ends. For a finite set of persons, we use
+   a visited-set to guarantee progress at each step. -/
+private def allPersons : List Person := [tom, bob, liz, ann, pat]
+
+def ancestors (p : Person) : List Person :=
+  let rec go (fuel : Nat) (frontier visited : List Person) : List Person :=
+    match fuel, frontier with
+    | 0, _          => visited
+    | _, []         => visited
+    | n + 1, x :: rest =>
+      let newChildren := children x |>.filter (· ∉ visited)
+      go n (rest ++ newChildren) (visited ++ newChildren)
+  go allPersons.length (children p) (children p)
+
+-- Equivalent to ?- ancestor(tom, X). — finds bob, liz, ann, pat
+/-- info: [Person.bob, Person.liz, Person.ann, Person.pat] -/
+#guard_msgs in
+#eval ancestors tom
+
+-- Equivalent to ?- ancestor(bob, X).
+/-- info: [Person.ann, Person.pat] -/
+#guard_msgs in
+#eval ancestors bob
+
+-- liz has no descendants:
+/-- info: [] -/
+#guard_msgs in
+#eval ancestors liz
+
+
+/- ============================================================
+   Bridging Propositions and Computation: Decidable
+   ============================================================
+   Prolog conflates truth and computation: a query is both a
+   logical statement and a program that searches for a proof.
+   Lean separates these: Approach 1 (Prop) is about truth,
+   Approach 2 (Bool) is about computation. But `Decidable`
+   reconnects them — it says "this Prop can be decided by
+   an algorithm."
+
+   With a Decidable instance, the `decide` tactic becomes
+   an automated proof search — Lean's closest analog to
+   Prolog's resolution engine. -/
+
+instance : Decidable (Parent x y) :=
+  match x, y with
+  | tom, bob => isTrue Parent.tom_bob
+  | tom, liz => isTrue Parent.tom_liz
+  | bob, ann => isTrue Parent.bob_ann
+  | bob, pat => isTrue Parent.bob_pat
+  | tom, tom => isFalse (by intro h; cases h)
+  | tom, ann => isFalse (by intro h; cases h)
+  | tom, pat => isFalse (by intro h; cases h)
+  | bob, tom => isFalse (by intro h; cases h)
+  | bob, bob => isFalse (by intro h; cases h)
+  | bob, liz => isFalse (by intro h; cases h)
+  | liz, _ => isFalse (by intro h; cases h)
+  | ann, _ => isFalse (by intro h; cases h)
+  | pat, _ => isFalse (by intro h; cases h)
+
+-- Now `decide` works as automated proof search:
+example : Parent tom bob := by decide
+example : ¬ Parent liz ann := by decide
+
+-- Even compound queries:
+example : Parent tom bob ∧ Parent bob ann := by decide
+example : Parent tom bob ∨ Parent tom ann := by decide
 
 
 /- ============================================================
@@ -175,6 +287,29 @@ Hint: Type class instance resolution failures can be inspected with the `set_opt
 -/
 #guard_msgs in
 #check (inferInstance : IsGrandparent liz ann)
+
+/- ============================================================
+   Ancestor: recursion and the type class resolver
+   ============================================================
+   In Prolog: ancestor(X,Y) :- parent(X,Y).
+              ancestor(X,Y) :- parent(X,Z), ancestor(Z,Y).
+
+   We could try to write this as type class instances:
+
+     class IsAncestor (x : Person) (y : outParam Person)
+     instance [IsParent x y] : IsAncestor x y := {}
+     instance [IsParent x mid] [IsAncestor mid y] : IsAncestor x y := {}
+
+   But this does NOT work. The type class resolver would loop:
+   to find IsAncestor x ?, it tries IsParent x ? → mid, then
+   needs IsAncestor mid ? → which again tries IsParent mid ? → ...
+   Lean detects the cycle and fails (or hits the recursion limit).
+
+   This is a fundamental limitation: type class resolution is
+   a fragment of Prolog that does not support arbitrary recursion.
+   Grandparent works because it has fixed depth (two IsParent steps).
+   Ancestor requires unbounded depth — exactly what Prolog's
+   backtracking search handles but type class resolution cannot. -/
 
 /- ============================================================
    Sibling: the limits of the type class resolver
