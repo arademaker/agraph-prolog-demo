@@ -1,0 +1,12 @@
+-- Persons (one per line)
+person tom
+person bob
+person liz
+person ann
+person pat
+
+-- Relation parent(parent, child)
+parent tom bob
+parent tom liz
+parent bob ann
+parent bob pat
