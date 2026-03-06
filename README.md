@@ -55,19 +55,14 @@ instance : IsParent tom bob where
 
 **Approach B: Compile-time lists.** The `#load_family` elaboration command reads the file during compilation and generates `def loadedPersons` / `def loadedParents` — pure Lean constants, no IO needed to use them.
 
-**Approach C: Compile-time type classes.** The `#consult` command (named after Prolog's `consult/1`) reads the file and generates:
-1. An `inductive FPerson` type with one constructor per person
-2. A `class FParent` type class
-3. One `instance` per `parent` line in the file
+**Approach C: Compile-time inductive Prop.** The `#consult_prop` command generates an indexed inductive proposition `Parent : Person → Person → Prop` (in the `FromFile` namespace) from the file — like Approach 1 in `Basic.lean`, but with constructors generated from external data. This enables writing *proofs* about the loaded relations (e.g., `example : ¬ Parent .liz .ann`).
 
-After `#consult "data/family.txt"`, the type class resolver works exactly like Prolog — `inferInstance : FParent .tom .bob` resolves automatically.
-
-**Approach D: Compile-time inductive Prop.** The `#consult_prop` command generates an indexed inductive proposition from the file — like Approach 1 in `Basic.lean`, but with constructors generated from external data. This enables writing *proofs* about the loaded relations (e.g., `example : ¬ FParentProp .liz .ann`).
+**Approach D: Compile-time type classes.** The `#consult` command (named after Prolog's `consult/1`) reads the file and generates a `class IsParent (x y : Person)` (in the `FromFile` namespace) with one `instance` per `parent` line. It reuses the same `Person` type from `Basic.lean`. After `#consult "data/family.txt"`, the type class resolver works exactly like Prolog — `inferInstance : IsParent .tom .bob` resolves automatically.
 
 ## Prolog to Lean Mapping
 
 **Atoms and facts:**
-- Prolog atom `tom` → `Person.tom` (inductive constructor), `"tom"` (string), or `FPerson.tom` (generated)
+- Prolog atom `tom` → `Person.tom` (inductive constructor) or `"tom"` (string)
 - Prolog fact `parent(tom, bob).` → `Parent.tom_bob` (Prop constructor), `isParent tom bob = true` (function), or `instance : IsParent tom bob` (type class)
 
 **Rules:**
@@ -84,7 +79,7 @@ After `#consult "data/family.txt"`, the type class resolver works exactly like P
 
 **Loading external facts:**
 - Prolog `consult('file.pl').` →
-  - `IO.FS.readFile` (runtime), `#load_family` (compile-time lists), `#consult` (compile-time type classes), or `#consult_prop` (compile-time inductive Prop)
+  - `IO.FS.readFile` (runtime), `#load_family` (compile-time lists), `#consult_prop` (compile-time inductive Prop), or `#consult` (compile-time type classes)
 
 **Negation and backtracking:**
 - Prolog negation `\+` → `¬` with proof (Props), `!= / filter` (functions), not natively supported (type classes)
@@ -99,6 +94,6 @@ lake exec demo    # runs the runtime IO demo
 
 ## Notes on Metaprogramming
 
-Approaches C and D use Lean's `elab` to generate code at compile-time. Approach C uses **syntax quotations** (`` `(command| ...) ``), which work well for simple inductive types and type class instances.
+Approaches C and D use Lean's `elab` to generate code at compile-time. Approach D uses **syntax quotations** (`` `(command| ...) ``), which work well for type class declarations and instances.
 
-Approach D, however, needs to generate an **indexed inductive type** where each constructor specifies a different return type (e.g., `| tom_bob : FParentProp .tom .bob`). Lean's quotation syntax does not currently support splicing constructor arrays into indexed inductives — the `rawIdent` in the constructor parser and the type signature `T : A -> A -> Prop` interact poorly with antiquotation. As a workaround, Approach D builds a source string and parses it with `Parser.runParserCategory`. This is a known ergonomic gap in Lean's metaprogramming API for indexed inductive families.
+Approach C, however, needs to generate an **indexed inductive type** where each constructor specifies a different return type (e.g., `| tom_bob : Parent .tom .bob`). Lean's quotation syntax does not currently support splicing constructor arrays into indexed inductives — the `rawIdent` in the constructor parser and the type signature `T : A -> A -> Prop` interact poorly with antiquotation. As a workaround, Approach C builds a source string and parses it with `Parser.runParserCategory`. This is a known ergonomic gap in Lean's metaprogramming API for indexed inductive families.
