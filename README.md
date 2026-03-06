@@ -39,7 +39,7 @@ def isParent : Person -> Person -> Bool
 #eval grandchildren tom  -- [ann, pat]
 ```
 
-**Approach 3: Type classes as Prolog.** Lean's type class resolution *is* essentially a Prolog engine ([Aarsen et al., 2020](https://arxiv.org/abs/2001.04301v1)): `class ~ predicate`, `instance ~ clause`, resolution ~ SLD with backtracking. The elaborator resolves queries automatically.
+**Approach 3: Type classes as Prolog.** Lean's type class resolution *is* essentially a Prolog engine ([Aarsen et al., 2020](https://arxiv.org/abs/2001.04301v1)): `class ~ predicate`, `instance ~ clause`, `resolution ~ SLD with backtracking`. The elaborator resolves queries automatically.
 
 ```lean
 class IsParent (x : Person) (y : outParam Person)
